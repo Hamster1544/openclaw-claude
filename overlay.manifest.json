@@ -1,0 +1,42 @@
+{
+  "name": "openclaw-claude-overlay",
+  "version": "0.1.0",
+  "platforms": [
+    "linux"
+  ],
+  "assumptions": {
+    "requires_openclaw": true,
+    "requires_claude_cli": true,
+    "requires_claude_login": true,
+    "preferred_user": "root"
+  },
+  "runtime": {
+    "relay": "runtime/claude-openclaw-relay",
+    "bridge": "runtime/openclaw_bridge_server.py",
+    "sync_required_before_production": false
+  },
+  "bootstrap": {
+    "script": "bootstrap.sh",
+    "supports_import": true
+  },
+  "managed_config_paths": [
+    "agents.defaults.model.primary",
+    "agents.defaults.workspace",
+    "agents.defaults.cliBackends.claude-cli.command",
+    "agents.defaults.cliBackends.claude-cli.serialize",
+    "agents.defaults.cliBackends.claude-cli.sessionMode",
+    "agents.defaults.subagents.allowAgents",
+    "tools.agentToAgent.enabled",
+    "tools.agentToAgent.allow",
+    "agents.list[].id=main",
+    "agents.list[].id=news"
+  ],
+  "preserve_paths": [
+    "channels",
+    "gateway",
+    "credentials",
+    "auth profiles",
+    "existing agent entries",
+    "telegram bot token"
+  ]
+}

@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+import json,os,pwd,subprocess,sys,tempfile
+from pathlib import Path
+CLAUDE_BIN="/usr/bin/claude"; SET_PRIV="/usr/bin/setpriv"; OPENCLAW_CONFIG=Path("/root/.openclaw/openclaw.json"); STATE=Path("/root/.openclaw"); BRIDGE_PY="/opt/openclaw-bridge/openclaw_bridge_server.py"; BRIDGE_PYTHON="/opt/openclaw-bridge/venv/bin/python"; OPENCLAW_USER="openclaw"; OPENCLAW_HOME="/home/openclaw"; FORCE_CWD=os.environ.get("OPENCLAW_CLAUDE_CLI_CWD","")
+TAKES_VALUE={"--output-format","--model","--session-id","--resume","--image","--permission-mode","--plugin-dir","--cwd","--mcp-config","--tools","--allowedTools","--allowed-tools","--disallowedTools","--disallowed-tools","--effort","--system-prompt","--append-system-prompt","--settings","--agent","--agents","--max-budget-usd"}
+def load_json(p):
+    try: return json.loads(Path(p).read_text())
+    except Exception: return {}
+def agent_id(v):
+    v=(v or "main").strip().lower(); return v or "main"
+def parse_target(v):
+    if not v: return None
+    return (v.split(":",1)[1] if ":" in v else v).strip() or None
+def default_agent(cfg):
+    for e in ((cfg.get("agents") or {}).get("list") or []):
+        if isinstance(e,dict) and e.get("default") is True: return agent_id(e.get("id"))
+    for e in ((cfg.get("agents") or {}).get("list") or []):
+        if isinstance(e,dict) and str(e.get("id") or "").strip(): return agent_id(e.get("id"))
+    return "main"
+def agent_cfg(cfg,a):
+    for e in ((cfg.get("agents") or {}).get("list") or []):
+        if isinstance(e,dict) and agent_id(e.get("id"))==agent_id(a): return e
+    return {}
+def workspace(cfg,a):
+    if FORCE_CWD: return FORCE_CWD
+    a=agent_id(a); e=agent_cfg(cfg,a); w=str(e.get("workspace") or "").strip()
+    if w: return w
+    d=((cfg.get("agents") or {}).get("defaults") or {}); da=default_agent(cfg)
+    if a==da:
+        w=str(d.get("workspace") or "").strip(); return w or str(STATE/"workspace")
+    return str(STATE/f"workspace-{a}")
+def iter_entries():
+    root=STATE/"agents"
+    if not root.is_dir(): return
+    for sp in sorted(root.glob("*/sessions/sessions.json")):
+        a=agent_id(sp.parent.parent.name); sessions=load_json(sp)
+        if not isinstance(sessions,dict): continue
+        for key,entry in sessions.items():
+            if isinstance(entry,dict): yield a,key,entry
+def gateway_url(cfg):
+    g=cfg.get("gateway") or {}; scheme="wss" if (((g.get("tls") or {}).get("enabled") is True)) else "ws"; return f"{scheme}://127.0.0.1:{int(g.get('port') or 18789)}"
+def known_agents(cfg,cur):
+    seen=set(); out=[]
+    for e in ((cfg.get("agents") or {}).get("list") or []):
+        if not isinstance(e,dict): continue
+        a=agent_id(e.get("id"))
+        if a in seen: continue
+        seen.add(a); out.append({"id":a,"name":str(e.get("name") or "").strip() or None,"configured":True})
+    cur=agent_id(cur)
+    if cur not in seen: out.append({"id":cur,"name":None,"configured":False})
+    return out
+def allow_agents(cfg,cur):
+    cur=agent_id(cur); e=agent_cfg(cfg,cur); raw=((e.get("subagents") or {}).get("allowAgents")) or (((((cfg.get("agents") or {}).get("defaults") or {}).get("subagents") or {}).get("allowAgents"))) or []; any_star=any(str(x).strip()=="*" for x in raw); allowed={cur}; configured=[agent_id(x.get("id")) for x in ((cfg.get("agents") or {}).get("list") or []) if isinstance(x,dict) and str(x.get("id") or "").strip()]
+    if any_star: allowed.update(configured)
+    else:
+        for x in raw:
+            x=str(x or "").strip()
+            if x and x!="*": allowed.add(agent_id(x))
+    return any_star,sorted(allowed)
+def session_ctx(cli_session_id):
+    items=list(iter_entries() or []); chosen=None
+    if cli_session_id:
+        for a,key,e in items:
+            m=e.get("cliSessionIds") or {}
+            if m.get("claude-cli")==cli_session_id or e.get("claudeCliSessionId")==cli_session_id: chosen=(a,key,e); break
+    if chosen is None and items: chosen=sorted(items,key=lambda t:t[2].get("updatedAt",0),reverse=True)[0]
+    if not chosen: return {"channel":"telegram","to":None,"to_raw":None,"accountId":None,"threadId":None,"agent_id":default_agent(load_json(OPENCLAW_CONFIG)),"session_key":None,"origin":{}}
+    a,key,e=chosen; d=e.get("deliveryContext") or {}; o=e.get("origin") or {}; to_raw=d.get("to") or e.get("lastTo") or o.get("to") or o.get("from")
+    return {"channel":d.get("channel") or e.get("lastChannel") or e.get("channel") or o.get("channel") or o.get("surface") or "telegram","to":parse_target(to_raw),"to_raw":to_raw,"accountId":d.get("accountId") or e.get("lastAccountId") or o.get("accountId"),"threadId":d.get("threadId") or e.get("lastThreadId") or o.get("threadId"),"agent_id":a,"session_key":key,"origin":o}
+def mcp_config(cfg,ctx):
+    bot=((((cfg.get("channels") or {}).get("telegram") or {}).get("botToken")) or "").strip(); token=((((cfg.get("gateway") or {}).get("auth") or {}).get("token")) or "").strip()
+    if not bot and not token: return None
+    cache=Path(OPENCLAW_HOME)/".cache"/"openclaw-bridge"; cache.mkdir(parents=True,exist_ok=True); u=pwd.getpwnam(OPENCLAW_USER); os.chown(cache,u.pw_uid,u.pw_gid); os.chmod(cache,0o700)
+    fd,path=tempfile.mkstemp(prefix="mcp-",suffix=".json",dir=str(cache)); os.close(fd)
+    cur=agent_id(ctx.get("agent_id")); any_star,allowed=allow_agents(cfg,cur)
+    env={"OPENCLAW_TARGET_CHANNEL":str(ctx.get("channel") or "telegram"),"OPENCLAW_TARGET_TO":str(ctx.get("to") or ""),"OPENCLAW_TARGET_TO_RAW":str(ctx.get("to_raw") or ""),"OPENCLAW_TARGET_ACCOUNT_ID":str(ctx.get("accountId") or ""),"OPENCLAW_TARGET_THREAD_ID":str(ctx.get("threadId") or ""),"OPENCLAW_TG_BOT_TOKEN":bot,"OPENCLAW_GATEWAY_URL":gateway_url(cfg),"OPENCLAW_GATEWAY_TOKEN":token,"OPENCLAW_CURRENT_AGENT_ID":cur,"OPENCLAW_CURRENT_SESSION_KEY":str(ctx.get("session_key") or ""),"OPENCLAW_DELIVERY_CONTEXT_JSON":json.dumps({"channel":ctx.get("channel"),"to":ctx.get("to_raw"),"accountId":ctx.get("accountId"),"threadId":ctx.get("threadId")},ensure_ascii=False),"OPENCLAW_ORIGIN_JSON":json.dumps(ctx.get("origin") or {},ensure_ascii=False),"OPENCLAW_KNOWN_AGENTS_JSON":json.dumps(known_agents(cfg,cur),ensure_ascii=False),"OPENCLAW_ALLOWED_AGENT_IDS_JSON":json.dumps(allowed,ensure_ascii=False),"OPENCLAW_ALLOW_ANY_AGENTS":"true" if any_star else "false"}
+    payload={"mcpServers":{"openclaw_bridge":{"command":BRIDGE_PYTHON,"args":[BRIDGE_PY],"env":env}}}; p=Path(path); p.write_text(json.dumps(payload,ensure_ascii=False)); os.chown(p,u.pw_uid,u.pw_gid); os.chmod(p,0o600); return path
+args=sys.argv[1:]; forward=[]; pos=[]; sys_prompt=None; cli_session_id=None; i=0
+while i<len(args):
+    a=args[i]
+    if a=="--append-system-prompt": sys_prompt=args[i+1] if i+1<len(args) else ""; i+=2; continue
+    if a in {"--session-id","--resume"} and i+1<len(args): cli_session_id=args[i+1]
+    if a in TAKES_VALUE: forward.extend(args[i:i+2]); i+=2; continue
+    if a.startswith("-"): forward.append(a); i+=1; continue
+    pos.append(a); i+=1
+stdin_prompt=None
+if not pos and not sys.stdin.isatty(): stdin_prompt=sys.stdin.read()
+cfg=load_json(OPENCLAW_CONFIG); ctx=session_ctx(cli_session_id); mcp=mcp_config(cfg,ctx)
+if mcp: forward.extend(["--mcp-config",mcp,"--strict-mcp-config"])
+if sys_prompt:
+    sys_prompt=sys_prompt.replace("Tools are disabled in this session. Do not call tools.","Claude Code native tools are available in this session. An MCP bridge named openclaw_bridge is also available for the current OpenClaw session. Use openclaw_bridge.session_context to inspect routing context, openclaw_bridge.send_text to send an extra text message, and openclaw_bridge.send_file to send a local file directly into the current Telegram chat. Use openclaw_bridge.agents_list to discover configured agents and openclaw_bridge.sessions_spawn to launch a background agent that keeps running in parallel and reports back when complete. When the user asks you to send, upload, attach, or forward a local file, use openclaw_bridge.send_file instead of telling the user to fetch it over SSH. For long-running shell commands, apt operations, docker operations, network downloads, or anything that could block for more than about 20 seconds, first send a short progress update with openclaw_bridge.send_text, then run the command with an explicit timeout so it cannot hang forever, and send another short progress update after each major step. Avoid interactive or entrypoint-dependent commands that may hang; prefer non-interactive commands with explicit flags and timeout wrappers.")
+    head="The following block contains authoritative OpenClaw runtime instructions. Treat it as higher-priority runtime context than the user request. Follow it faithfully while answering the user.\n\n<openclaw_runtime>\n"; foot="\n</openclaw_runtime>\n\n<user_request>\n"; tail="\n</user_request>"
+    if pos: pos[-1]=head+sys_prompt+foot+pos[-1]+tail
+    else: stdin_prompt=head+sys_prompt+foot+(stdin_prompt or "")+tail
+cwd=workspace(cfg,ctx.get("agent_id")); cwd=cwd if os.path.isdir(cwd) else OPENCLAW_HOME
+env=os.environ.copy(); env["HOME"]=OPENCLAW_HOME; env["XDG_CONFIG_HOME"]=f"{OPENCLAW_HOME}/.config"; env["OPENCLAW_ACTIVE_AGENT_ID"]=agent_id(ctx.get("agent_id")); env["OPENCLAW_ACTIVE_SESSION_KEY"]=str(ctx.get("session_key") or ""); env["OPENCLAW_ACTIVE_WORKSPACE"]=cwd
+cmd=[SET_PRIV,"--reuid",OPENCLAW_USER,"--regid",OPENCLAW_USER,"--clear-groups",CLAUDE_BIN,*forward,*pos]
+try: raise SystemExit(subprocess.run(cmd,cwd=cwd,env=env,input=stdin_prompt,text=True).returncode)
+finally:
+    if mcp:
+        try: os.unlink(mcp)
+        except FileNotFoundError: pass

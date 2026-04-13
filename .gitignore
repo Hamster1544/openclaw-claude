@@ -1,0 +1,12 @@
+*.tar.gz
+*.tgz
+*.zip
+.DS_Store
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+runtime/venv/
+dist/
+tmp/
+build/
