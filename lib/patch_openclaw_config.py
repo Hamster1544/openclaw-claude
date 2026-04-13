@@ -43,15 +43,13 @@ def normalize_model_ref(value: str | None, default_model: str, *, rewrite_mode: 
     ref = str(value or "").strip()
     if not ref:
         return default_model if force_any else None
-    if force_any:
-        return default_model
     if ref.startswith("claude-cli/"):
         return ref
     if ref.startswith("anthropic/claude-"):
         return "claude-cli/" + ref.split("/", 1)[1]
     if ref.startswith("claude-"):
         return "claude-cli/" + ref
-    if rewrite_mode == "all":
+    if force_any or rewrite_mode == "overlay-all":
         return default_model
     return ref
 
@@ -201,7 +199,7 @@ def main():
     parser.add_argument("--bridge-path", required=True)
     parser.add_argument("--model", default="claude-cli/claude-opus-4-6")
     parser.add_argument("--workspace", required=True)
-    parser.add_argument("--rewrite-mode", choices=["claude-only", "all"], default="claude-only")
+    parser.add_argument("--rewrite-mode", choices=["claude-only", "overlay-all"], default="overlay-all")
     parser.add_argument("--force-default-model", type=int, default=0)
     parser.add_argument("--force-agent-models", type=int, default=0)
     parser.add_argument("--ensure-news-agent", type=int, default=0)

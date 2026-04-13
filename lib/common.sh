@@ -196,6 +196,79 @@ ensure_runtime_user() {
   fi
 }
 
+ensure_acl_tool() {
+  if command -v setfacl >/dev/null 2>&1; then
+    return 0
+  fi
+  if command -v apt-get >/dev/null 2>&1; then
+    apt-get update -y >/dev/null 2>&1 || true
+    apt-get install -y acl >/dev/null 2>&1 || true
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf install -y acl >/dev/null 2>&1 || true
+  elif command -v yum >/dev/null 2>&1; then
+    yum install -y acl >/dev/null 2>&1 || true
+  elif command -v zypper >/dev/null 2>&1; then
+    zypper --non-interactive install acl >/dev/null 2>&1 || true
+  elif command -v pacman >/dev/null 2>&1; then
+    pacman -Sy --noconfirm acl >/dev/null 2>&1 || true
+  fi
+}
+
+list_configured_workspaces() {
+  local cfg
+  cfg="$(config_path)"
+  python3 - "$cfg" "$(target_home)" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+cfg_path = Path(sys.argv[1])
+target_home = Path(sys.argv[2])
+default_fallback = str(target_home / "openclaw-workspace")
+if not cfg_path.exists():
+    print(default_fallback)
+    raise SystemExit(0)
+
+try:
+    data = json.loads(cfg_path.read_text())
+except Exception:
+    print(default_fallback)
+    raise SystemExit(0)
+
+agents = data.get("agents") or {}
+defaults = agents.get("defaults") or {}
+default_workspace = str(defaults.get("workspace") or "").strip() or default_fallback
+
+seen = set()
+if default_workspace and default_workspace not in seen:
+    print(default_workspace)
+    seen.add(default_workspace)
+
+for entry in agents.get("list") or []:
+    if not isinstance(entry, dict):
+        continue
+    value = str(entry.get("workspace") or default_workspace).strip()
+    if value and value not in seen:
+        print(value)
+        seen.add(value)
+PY
+}
+
+grant_parent_traversal() {
+  local path="$1" user current
+  user="$(openclaw_user)"
+  current="$(dirname "$path")"
+  while [[ -n "$current" && "$current" != "/" && "$current" != "." ]]; do
+    if command -v setfacl >/dev/null 2>&1; then
+      setfacl -m "u:${user}:x" "$current" >/dev/null 2>&1 || true
+    fi
+    current="$(dirname "$current")"
+  done
+  if command -v setfacl >/dev/null 2>&1; then
+    setfacl -m "u:${user}:x" "/" >/dev/null 2>&1 || true
+  fi
+}
+
 grant_workspace_access() {
   local workspace user
   workspace="$1"
@@ -203,18 +276,29 @@ grant_workspace_access() {
 
   [[ -d "$workspace" ]] || return 0
 
+  ensure_acl_tool
+
   if command -v setfacl >/dev/null 2>&1; then
+    grant_parent_traversal "$workspace"
     setfacl -R -m "u:${user}:rwx" "$workspace" >/dev/null 2>&1 || true
     setfacl -d -m "u:${user}:rwx" "$workspace" >/dev/null 2>&1 || true
     return 0
   fi
 
-  if [[ "${OVERLAY_TAKE_WORKSPACE_OWNERSHIP:-0}" == "1" ]]; then
+  if [[ "${OVERLAY_TAKE_WORKSPACE_OWNERSHIP:-1}" == "1" ]]; then
     chown -R "$user:$user" "$workspace"
     return 0
   fi
 
   log "workspace access was not changed for $workspace; set OVERLAY_TAKE_WORKSPACE_OWNERSHIP=1 if Claude cannot read/write it"
+}
+
+grant_all_workspace_access() {
+  local workspace
+  while IFS= read -r workspace; do
+    [[ -n "$workspace" ]] || continue
+    grant_workspace_access "$workspace"
+  done < <(list_configured_workspaces)
 }
 
 restart_gateway() {

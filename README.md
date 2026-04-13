@@ -6,8 +6,9 @@
 - ставит relay для OpenClaw;
 - ставит MCP bridge для Telegram/file sending и background subagents;
 - сохраняет существующие `channels`, `gateway`, bot token и прочие чужие поля;
-- мягко переводит только Claude-модели на `claude-cli` по умолчанию;
-- не трогает другие провайдеры, если это не запрошено явно.
+- по умолчанию переводит все агентские модели на `claude-cli`, сохраняя `opus/sonnet`, если агент уже был на Claude;
+- для не-Claude моделей использует выбранную overlay-модель по умолчанию;
+- автоматически раздаёт runtime user доступ ко всем workspace из конфига.
 
 ## Базовые требования
 
@@ -35,17 +36,21 @@ Installer не переустанавливает `openclaw`, а:
 
 ## Поведение patcher
 
-По умолчанию patcher работает в режиме `claude-only`:
-- `anthropic/claude-*` -> `claude-cli/claude-*`
+По умолчанию patcher работает в режиме `overlay-all`:
+- `anthropic/claude-opus-*` -> `claude-cli/claude-opus-*`
+- `anthropic/claude-sonnet-*` -> `claude-cli/claude-sonnet-*`
 - уже существующие `claude-cli/*` остаются как есть
-- не-Claude модели не трогаются
+- не-Claude модели переводятся на `OVERLAY_MODEL`
 
-Это значит, что существующие `openai-codex/*` и другие провайдеры сохраняются.
+Это значит:
+- агент, который был на Opus, останется на Opus;
+- агент, который был на Sonnet, останется на Sonnet;
+- агент на другом провайдере тоже перейдёт на наш `claude-cli` путь.
 
-Если нужен более жёсткий режим:
-- `OVERLAY_MODEL_REWRITE_MODE=all`
-- `OVERLAY_FORCE_DEFAULT_MODEL=1`
-- `OVERLAY_FORCE_AGENT_MODELS=1`
+Если нужен более мягкий режим:
+- `OVERLAY_MODEL_REWRITE_MODE=claude-only`
+- `OVERLAY_FORCE_DEFAULT_MODEL=0`
+- `OVERLAY_FORCE_AGENT_MODELS=0`
 
 ## Полезные env vars
 
@@ -58,11 +63,11 @@ Installer не переустанавливает `openclaw`, а:
 - `OVERLAY_CLAUDE_SOURCE_HOME` — откуда копировать `.claude*`
 - `OVERLAY_WORKSPACE` — явный workspace path
 - `OVERLAY_MODEL` — default Claude model, по умолчанию `claude-cli/claude-opus-4-6`
-- `OVERLAY_MODEL_REWRITE_MODE` — `claude-only` или `all`
+- `OVERLAY_MODEL_REWRITE_MODE` — `overlay-all` или `claude-only`
 - `OVERLAY_FORCE_DEFAULT_MODEL=1` — принудительно заменить default model
 - `OVERLAY_FORCE_AGENT_MODELS=1` — принудительно заменить явные agent models
 - `OVERLAY_ENSURE_NEWS_AGENT=1` — добавить `news` агент
-- `OVERLAY_TAKE_WORKSPACE_OWNERSHIP=1` — если нет `setfacl`, рекурсивно сменить владельца workspace на runtime user
+- `OVERLAY_TAKE_WORKSPACE_OWNERSHIP=1` — если ACL недоступны, рекурсивно сменить владельца workspace на runtime user
 
 ## Быстрая установка
 

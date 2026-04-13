@@ -26,9 +26,9 @@ BRIDGE_PYTHON="$OVERLAY_HOME/venv/bin/python"
 BACKUP_DIR="$(backup_dir)"
 WORKSPACE_PATH="${OVERLAY_WORKSPACE:-$(detect_workspace)}"
 MODEL_REF="${OVERLAY_MODEL:-claude-cli/claude-opus-4-6}"
-MODEL_REWRITE_MODE="${OVERLAY_MODEL_REWRITE_MODE:-claude-only}"
-FORCE_DEFAULT_MODEL="${OVERLAY_FORCE_DEFAULT_MODEL:-0}"
-FORCE_AGENT_MODELS="${OVERLAY_FORCE_AGENT_MODELS:-0}"
+MODEL_REWRITE_MODE="${OVERLAY_MODEL_REWRITE_MODE:-overlay-all}"
+FORCE_DEFAULT_MODEL="${OVERLAY_FORCE_DEFAULT_MODEL:-1}"
+FORCE_AGENT_MODELS="${OVERLAY_FORCE_AGENT_MODELS:-1}"
 ENSURE_NEWS_AGENT="${OVERLAY_ENSURE_NEWS_AGENT:-0}"
 OPENCLAW_USER="$(openclaw_user)"
 OPENCLAW_HOME="$(openclaw_home)"
@@ -157,7 +157,7 @@ chown -R "$OPENCLAW_USER:$OPENCLAW_USER" "$OPENCLAW_HOME" "$OVERLAY_HOME"
 
 sync_claude_credentials
 install_sudoers
-grant_workspace_access "$WORKSPACE_PATH"
+grant_all_workspace_access
 
 python3 "$REPO_ROOT/lib/patch_openclaw_config.py" \
   --config "$CONFIG_PATH" \
