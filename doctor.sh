@@ -17,6 +17,7 @@ RELAY_PATH="$(relay_target_path)"
 BRIDGE_PATH="$OVERLAY_HOME/openclaw_bridge_server.py"
 OPENCLAW_USER="$(openclaw_user)"
 OPENCLAW_HOME="$(openclaw_home)"
+TARGET_USER="$(target_user)"
 
 log "config: $CONFIG_PATH"
 [[ -f "$CONFIG_PATH" ]] || die "missing config: $CONFIG_PATH"
@@ -33,12 +34,23 @@ from pathlib import Path
 cfg = json.loads(Path(sys.argv[1]).read_text())
 defaults = ((cfg.get("agents") or {}).get("defaults") or {})
 cli = ((defaults.get("cliBackends") or {}).get("claude-cli") or {})
-print("model.primary =", (defaults.get("model") or {}).get("primary"))
+model = defaults.get("model")
+if isinstance(model, dict):
+    primary = model.get("primary")
+else:
+    primary = model
+print("model.primary =", primary)
 print("claude-cli.command =", cli.get("command"))
 print("claude-cli.serialize =", cli.get("serialize"))
 print("claude-cli.sessionMode =", cli.get("sessionMode"))
+overlay = (cfg.get("overlay") or {}).get("openclawClaudeOverlay") or {}
+print("overlay.rewriteMode =", overlay.get("rewriteMode"))
+print("overlay.runtimeUser =", overlay.get("runtimeUser"))
 PY
 
 sudo -n -u "$OPENCLAW_USER" claude --version >/dev/null 2>&1 || true
 openclaw gateway status || true
+if [[ "$TARGET_USER" != "root" ]]; then
+  sudo -u "$TARGET_USER" HOME="$(target_home)" openclaw gateway status || true
+fi
 log "doctor finished"

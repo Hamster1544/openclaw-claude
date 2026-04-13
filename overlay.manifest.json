@@ -1,6 +1,6 @@
 {
   "name": "openclaw-claude-overlay",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "platforms": [
     "linux"
   ],
@@ -21,15 +21,13 @@
   },
   "managed_config_paths": [
     "agents.defaults.model.primary",
-    "agents.defaults.workspace",
     "agents.defaults.cliBackends.claude-cli.command",
     "agents.defaults.cliBackends.claude-cli.serialize",
     "agents.defaults.cliBackends.claude-cli.sessionMode",
     "agents.defaults.subagents.allowAgents",
     "tools.agentToAgent.enabled",
     "tools.agentToAgent.allow",
-    "agents.list[].id=main",
-    "agents.list[].id=news"
+    "overlay.openclawClaudeOverlay"
   ],
   "preserve_paths": [
     "channels",

@@ -12,24 +12,39 @@ require_cmd openclaw
 require_cmd claude
 require_cmd sudo
 require_cmd setpriv
+require_cmd env
 
 REPO_ROOT="$(repo_root)"
 TARGET_HOME="$(target_home)"
+TARGET_USER="$(target_user)"
 STATE_DIR="$(state_dir)"
 CONFIG_PATH="$(config_path)"
 OVERLAY_HOME="$(overlay_home)"
 RELAY_PATH="$(relay_target_path)"
+BRIDGE_PATH="$OVERLAY_HOME/openclaw_bridge_server.py"
+BRIDGE_PYTHON="$OVERLAY_HOME/venv/bin/python"
 BACKUP_DIR="$(backup_dir)"
 WORKSPACE_PATH="${OVERLAY_WORKSPACE:-$(detect_workspace)}"
 MODEL_REF="${OVERLAY_MODEL:-claude-cli/claude-opus-4-6}"
+MODEL_REWRITE_MODE="${OVERLAY_MODEL_REWRITE_MODE:-claude-only}"
+FORCE_DEFAULT_MODEL="${OVERLAY_FORCE_DEFAULT_MODEL:-0}"
+FORCE_AGENT_MODELS="${OVERLAY_FORCE_AGENT_MODELS:-0}"
+ENSURE_NEWS_AGENT="${OVERLAY_ENSURE_NEWS_AGENT:-0}"
 OPENCLAW_USER="$(openclaw_user)"
 OPENCLAW_HOME="$(openclaw_home)"
+CLAUDE_SOURCE_HOME="$(claude_source_home)"
 
 sync_claude_credentials() {
-  local pattern src target found
+  local src target found
   mkdir -p "$OPENCLAW_HOME"
   found=0
-  for src in /root/.claude /root/.claude.json /root/.claude.json.backup /root/.claude-config /root/.claude-config.json /root/.claude*; do
+  for src in \
+    "$CLAUDE_SOURCE_HOME/.claude" \
+    "$CLAUDE_SOURCE_HOME/.claude.json" \
+    "$CLAUDE_SOURCE_HOME/.claude.json.backup" \
+    "$CLAUDE_SOURCE_HOME/.claude-config" \
+    "$CLAUDE_SOURCE_HOME/.claude-config.json" \
+    "$CLAUDE_SOURCE_HOME"/.claude*; do
     [[ -e "$src" ]] || continue
     found=1
     target="$OPENCLAW_HOME/$(basename "$src")"
@@ -38,9 +53,9 @@ sync_claude_credentials() {
   done
   chown -R "$OPENCLAW_USER:$OPENCLAW_USER" "$OPENCLAW_HOME"
   if [[ "$found" -eq 0 ]]; then
-    log "no /root/.claude* credentials found to sync"
+    log "no Claude credentials found in $CLAUDE_SOURCE_HOME"
   else
-    log "claude credentials synced into $OPENCLAW_HOME"
+    log "Claude credentials synced from $CLAUDE_SOURCE_HOME into $OPENCLAW_HOME"
   fi
 }
 
@@ -50,7 +65,7 @@ install_sudoers() {
   chmod 440 "$sudoers_path"
 }
 
-render_runtime_paths() {
+render_runtime_files() {
   local claude_bin openclaw_bin setpriv_bin sudo_bin python3_bin env_bin
   claude_bin="$(command -v claude)"
   openclaw_bin="$(command -v openclaw)"
@@ -58,48 +73,78 @@ render_runtime_paths() {
   sudo_bin="$(command -v sudo)"
   python3_bin="$(command -v python3)"
   env_bin="$(command -v env)"
-  python3 - "$RELAY_PATH" "$OVERLAY_HOME/openclaw_bridge_server.py" \
-    "$claude_bin" "$openclaw_bin" "$setpriv_bin" "$sudo_bin" "$python3_bin" "$env_bin" <<'PY'
+
+  python3 - "$RELAY_PATH" "$BRIDGE_PATH" \
+    "$claude_bin" "$openclaw_bin" "$setpriv_bin" "$sudo_bin" "$python3_bin" "$env_bin" \
+    "$CONFIG_PATH" "$STATE_DIR" "$BRIDGE_PATH" "$BRIDGE_PYTHON" "$OPENCLAW_USER" "$OPENCLAW_HOME" "$RELAY_PATH" "$WORKSPACE_PATH" <<'PY'
 from pathlib import Path
 import sys
 
 relay_path = Path(sys.argv[1])
 bridge_path = Path(sys.argv[2])
-claude_bin, openclaw_bin, setpriv_bin, sudo_bin, python3_bin, env_bin = sys.argv[3:]
+(
+    claude_bin,
+    openclaw_bin,
+    setpriv_bin,
+    sudo_bin,
+    python3_bin,
+    env_bin,
+    config_path,
+    state_dir,
+    rendered_bridge_path,
+    bridge_python,
+    runtime_user,
+    runtime_home,
+    relay_target,
+    default_workspace,
+) = sys.argv[3:]
 
-relay = relay_path.read_text()
-relay = relay.replace('CLAUDE_BIN="/usr/bin/claude"', f'CLAUDE_BIN="{claude_bin}"')
-relay = relay.replace('SET_PRIV="/usr/bin/setpriv"', f'SET_PRIV="{setpriv_bin}"')
-relay_path.write_text(relay)
-
-bridge = bridge_path.read_text()
-bridge = bridge.replace('BIN="/usr/bin/openclaw"', f'BIN="{openclaw_bin}"')
-bridge = bridge.replace('"/usr/bin/sudo"', f'"{sudo_bin}"')
-bridge = bridge.replace('"/usr/bin/python3"', f'"{python3_bin}"')
-bridge = bridge.replace('"/usr/bin/env"', f'"{env_bin}"')
-bridge_path.write_text(bridge)
-PY
+replacements = {
+    "__OVERLAY_CLAUDE_BIN__": claude_bin,
+    "__OVERLAY_SETPRIV_BIN__": setpriv_bin,
+    "__OVERLAY_CONFIG_PATH__": config_path,
+    "__OVERLAY_STATE_DIR__": state_dir,
+    "__OVERLAY_BRIDGE_PATH__": rendered_bridge_path,
+    "__OVERLAY_BRIDGE_PYTHON__": bridge_python,
+    "__OVERLAY_RUNTIME_USER__": runtime_user,
+    "__OVERLAY_RUNTIME_HOME__": runtime_home,
+    "__OVERLAY_OPENCLAW_BIN__": openclaw_bin,
+    "__OVERLAY_SUDO_BIN__": sudo_bin,
+    "__OVERLAY_PYTHON3_BIN__": python3_bin,
+    "__OVERLAY_ENV_BIN__": env_bin,
+    "__OVERLAY_RELAY_PATH__": relay_target,
+    "__OVERLAY_DEFAULT_WORKSPACE__": default_workspace,
 }
 
+for path in (relay_path, bridge_path):
+    text = path.read_text()
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    path.write_text(text)
+PY
+  chmod +x "$RELAY_PATH" "$BRIDGE_PATH"
+}
+
+log "target user: $TARGET_USER"
 log "target home: $TARGET_HOME"
 log "state dir: $STATE_DIR"
+log "config: $CONFIG_PATH"
 log "workspace: $WORKSPACE_PATH"
-log "model: $MODEL_REF"
+log "runtime user: $OPENCLAW_USER"
+log "model default: $MODEL_REF"
+log "rewrite mode: $MODEL_REWRITE_MODE"
 
-mkdir -p "$BACKUP_DIR" "$OVERLAY_HOME" "$OPENCLAW_HOME" "$WORKSPACE_PATH" "$STATE_DIR"
+mkdir -p "$BACKUP_DIR" "$OVERLAY_HOME" "$STATE_DIR"
 
 if [[ -f "$CONFIG_PATH" ]]; then
   cp "$CONFIG_PATH" "$BACKUP_DIR/openclaw.json.bak"
 fi
 
-if ! id -u "$OPENCLAW_USER" >/dev/null 2>&1; then
-  useradd -m -s /bin/bash "$OPENCLAW_USER"
-fi
+ensure_runtime_user
+mkdir -p "$OPENCLAW_HOME" "$WORKSPACE_PATH"
 
 cp "$REPO_ROOT/runtime/claude-openclaw-relay" "$RELAY_PATH"
-cp "$REPO_ROOT/runtime/openclaw_bridge_server.py" "$OVERLAY_HOME/openclaw_bridge_server.py"
-chmod +x "$RELAY_PATH" "$OVERLAY_HOME/openclaw_bridge_server.py"
-render_runtime_paths
+cp "$REPO_ROOT/runtime/openclaw_bridge_server.py" "$BRIDGE_PATH"
 
 if [[ -f "$REPO_ROOT/runtime/requirements.txt" ]]; then
   python3 -m venv "$OVERLAY_HOME/venv"
@@ -107,16 +152,26 @@ if [[ -f "$REPO_ROOT/runtime/requirements.txt" ]]; then
   "$OVERLAY_HOME/venv/bin/pip" install -r "$REPO_ROOT/runtime/requirements.txt" >/dev/null
 fi
 
-chown -R "$OPENCLAW_USER:$OPENCLAW_USER" "$OPENCLAW_HOME" "$WORKSPACE_PATH"
+render_runtime_files
+chown -R "$OPENCLAW_USER:$OPENCLAW_USER" "$OPENCLAW_HOME" "$OVERLAY_HOME"
+
 sync_claude_credentials
 install_sudoers
+grant_workspace_access "$WORKSPACE_PATH"
 
 python3 "$REPO_ROOT/lib/patch_openclaw_config.py" \
   --config "$CONFIG_PATH" \
   --relay-path "$RELAY_PATH" \
-  --bridge-path "$OVERLAY_HOME/openclaw_bridge_server.py" \
+  --bridge-path "$BRIDGE_PATH" \
   --workspace "$WORKSPACE_PATH" \
   --model "$MODEL_REF" \
+  --rewrite-mode "$MODEL_REWRITE_MODE" \
+  --force-default-model "$FORCE_DEFAULT_MODEL" \
+  --force-agent-models "$FORCE_AGENT_MODELS" \
+  --ensure-news-agent "$ENSURE_NEWS_AGENT" \
+  --runtime-user "$OPENCLAW_USER" \
+  --runtime-home "$OPENCLAW_HOME" \
+  --state-dir "$STATE_DIR" \
   --write
 
 restart_gateway

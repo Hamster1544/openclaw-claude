@@ -1,5 +1,5 @@
-#!/opt/openclaw-bridge/venv/bin/python
-import json,mimetypes,os,subprocess,sys,time,uuid
+#!__OVERLAY_BRIDGE_PYTHON__
+import json,mimetypes,os,pwd,subprocess,sys,time,uuid
 from pathlib import Path
 import requests
 from mcp.server.fastmcp import FastMCP
@@ -17,19 +17,34 @@ ALLOW_ANY=os.environ.get("OPENCLAW_ALLOW_ANY_AGENTS","false").lower() in {"1","t
 DELIVERY=json.loads(os.environ.get("OPENCLAW_DELIVERY_CONTEXT_JSON") or "{}")
 KNOWN=[x for x in json.loads(os.environ.get("OPENCLAW_KNOWN_AGENTS_JSON") or "[]") if isinstance(x,dict)]
 ALLOWED=[str(x).strip().lower() for x in json.loads(os.environ.get("OPENCLAW_ALLOWED_AGENT_IDS_JSON") or "[]") if str(x).strip()]
-BIN="/usr/bin/openclaw"
+BIN="__OVERLAY_OPENCLAW_BIN__"
 WATCH="--watch-subagent"
-STATE=Path("/root/.openclaw")
+STATE=Path("__OVERLAY_STATE_DIR__")
 CONFIG=STATE/"openclaw.json"
-RELAY="/usr/local/bin/claude-openclaw-relay"
-DEFAULT_WORKSPACE="/home/openclaw/workspace"
+RELAY="__OVERLAY_RELAY_PATH__"
+DEFAULT_WORKSPACE="__OVERLAY_DEFAULT_WORKSPACE__"
+OPENCLAW_USER="__OVERLAY_RUNTIME_USER__"
 
 def now_ms():
     return int(time.time()*1000)
 
+def _needs_sudo(path):
+    p = Path(path)
+    try:
+        runtime_uid = pwd.getpwnam(OPENCLAW_USER).pw_uid
+    except Exception:
+        runtime_uid = os.getuid()
+    probe = p
+    while not probe.exists() and probe != probe.parent:
+        probe = probe.parent
+    try:
+        return probe.stat().st_uid != runtime_uid
+    except Exception:
+        return str(p).startswith(str(STATE))
+
 def _sudo_py(code, payload, timeout=45):
     proc=subprocess.run([
-        "/usr/bin/sudo","-n","/usr/bin/python3","-c",code
+        "__OVERLAY_SUDO_BIN__","-n","__OVERLAY_PYTHON3_BIN__","-c",code
     ], input=json.dumps(payload, ensure_ascii=False), text=True, capture_output=True, timeout=timeout)
     if proc.returncode!=0:
         raise RuntimeError((proc.stderr or proc.stdout or "sudo python failed").strip())
@@ -38,7 +53,7 @@ def _sudo_py(code, payload, timeout=45):
 def load_json(path, default):
     p=Path(path)
     try:
-        if str(p).startswith("/root/"):
+        if _needs_sudo(p):
             raw=_sudo_py(
                 "import json,sys; from pathlib import Path; req=json.load(sys.stdin); p=Path(req['path']);\n"
                 "try:\n data=json.loads(p.read_text())\n"
@@ -55,7 +70,7 @@ def load_json(path, default):
 
 def save_json_atomic(path, value):
     p=Path(path)
-    if str(p).startswith("/root/"):
+    if _needs_sudo(p):
         _sudo_py(
             "import json,sys,os; from pathlib import Path; req=json.load(sys.stdin); p=Path(req['path']); p.parent.mkdir(parents=True, exist_ok=True); tmp=p.with_name(p.name + '.tmp.' + req['suffix']); tmp.write_text(json.dumps(req['value'], ensure_ascii=False, indent=2)); os.replace(tmp, p)",
             {"path": str(p), "value": value, "suffix": uuid.uuid4().hex},
@@ -230,7 +245,7 @@ def tg(method,data,files=None):
     return payload["result"]
 
 def gw(method,params=None,expect=False,timeout=30000):
-    cmd=["/usr/bin/sudo","-n",BIN,"gateway","call",method,"--json","--timeout",str(max(1000,int(timeout))),"--params",json.dumps(params or {},ensure_ascii=False)]
+    cmd=["__OVERLAY_SUDO_BIN__","-n",BIN,"gateway","call",method,"--json","--timeout",str(max(1000,int(timeout))),"--params",json.dumps(params or {},ensure_ascii=False)]
     if expect:
         cmd.append("--expect-final")
     p=subprocess.run(cmd,text=True,capture_output=True,timeout=max(30,int(timeout/1000)+15))
@@ -331,7 +346,7 @@ def run_direct_subagent(payload):
     env=os.environ.copy()
     env["OPENCLAW_CURRENT_AGENT_ID"]=agent_id
     env["OPENCLAW_CURRENT_SESSION_KEY"]=child_key
-    cmd=["/usr/bin/sudo","-n","/usr/bin/env",f"OPENCLAW_CURRENT_AGENT_ID={agent_id}",f"OPENCLAW_CURRENT_SESSION_KEY={child_key}",RELAY,"-p","--output-format","json","--dangerously-skip-permissions","--model",model,"--session-id",cli_session_id,"--append-system-prompt",system_prompt,task]
+    cmd=["__OVERLAY_SUDO_BIN__","-n","__OVERLAY_ENV_BIN__",f"OPENCLAW_CURRENT_AGENT_ID={agent_id}",f"OPENCLAW_CURRENT_SESSION_KEY={child_key}",RELAY,"-p","--output-format","json","--dangerously-skip-permissions","--model",model,"--session-id",cli_session_id,"--append-system-prompt",system_prompt,task]
     try:
         proc=subprocess.run(cmd,cwd=workspace if os.path.isdir(workspace) else DEFAULT_WORKSPACE,env=env,text=True,capture_output=True,timeout=(timeout_seconds+60) if timeout_seconds>0 else None)
     except subprocess.TimeoutExpired:

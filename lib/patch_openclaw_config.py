@@ -39,7 +39,41 @@ def merge_allow_all(value):
     return ["*"]
 
 
-def ensure_agent(agents_list: list, agent_id: str, *, workspace: str, default: bool = False, name: str | None = None):
+def normalize_model_ref(value: str | None, default_model: str, *, rewrite_mode: str, force_any: bool = False) -> str | None:
+    ref = str(value or "").strip()
+    if not ref:
+        return default_model if force_any else None
+    if force_any:
+        return default_model
+    if ref.startswith("claude-cli/"):
+        return ref
+    if ref.startswith("anthropic/claude-"):
+        return "claude-cli/" + ref.split("/", 1)[1]
+    if ref.startswith("claude-"):
+        return "claude-cli/" + ref
+    if rewrite_mode == "all":
+        return default_model
+    return ref
+
+
+def patch_model_block(value, *, default_model: str, rewrite_mode: str, force_primary: bool = False):
+    if isinstance(value, dict):
+        result = deep_copy(value)
+        primary = normalize_model_ref(result.get("primary"), default_model, rewrite_mode=rewrite_mode, force_any=force_primary)
+        if primary:
+            result["primary"] = primary
+        fallbacks = result.get("fallbacks")
+        if isinstance(fallbacks, list):
+            result["fallbacks"] = [
+                normalize_model_ref(item, default_model, rewrite_mode=rewrite_mode, force_any=False) or item
+                for item in fallbacks
+            ]
+        return result
+    rewritten = normalize_model_ref(value, default_model, rewrite_mode=rewrite_mode, force_any=force_primary)
+    return rewritten or value
+
+
+def ensure_agent(agents_list: list, agent_id: str, *, workspace: str | None = None, default: bool = False, name: str | None = None):
     entry = None
     for item in agents_list:
         if isinstance(item, dict) and str(item.get("id") or "").strip() == agent_id:
@@ -51,30 +85,67 @@ def ensure_agent(agents_list: list, agent_id: str, *, workspace: str, default: b
 
     if name and not entry.get("name"):
         entry["name"] = name
-    if default:
+    if default and "default" not in entry:
         entry["default"] = True
-    if workspace:
+    if workspace and not entry.get("workspace"):
         entry["workspace"] = workspace
 
     subagents = ensure_dict(entry, "subagents")
-    subagents["allowAgents"] = merge_allow_all(subagents.get("allowAgents"))
+    if not subagents.get("allowAgents"):
+        subagents["allowAgents"] = ["*"]
     return entry
 
 
-def patch_config(data: dict, *, relay_path: str, bridge_path: str, model: str, workspace: str) -> dict:
+def patch_agent_models(agents_list: list, *, default_model: str, rewrite_mode: str, force_agent_models: bool):
+    for entry in agents_list:
+        if not isinstance(entry, dict):
+            continue
+        if "model" in entry:
+            entry["model"] = patch_model_block(
+                entry.get("model"),
+                default_model=default_model,
+                rewrite_mode=rewrite_mode,
+                force_primary=force_agent_models,
+            )
+
+
+def patch_model_catalog(defaults: dict, default_model: str):
+    catalog = ensure_dict(defaults, "models")
+    catalog.setdefault(default_model, {})
+
+
+def patch_config(
+    data: dict,
+    *,
+    relay_path: str,
+    bridge_path: str,
+    model: str,
+    workspace: str,
+    rewrite_mode: str,
+    force_default_model: bool,
+    force_agent_models: bool,
+    ensure_news_agent: bool,
+    runtime_user: str,
+    runtime_home: str,
+    state_dir: str,
+) -> dict:
     cfg = deep_copy(data)
 
     agents = ensure_dict(cfg, "agents")
     defaults = ensure_dict(agents, "defaults")
 
-    model_cfg = defaults.get("model")
-    if not isinstance(model_cfg, dict):
-        model_cfg = {"primary": str(model_cfg).strip()} if model_cfg else {}
-        defaults["model"] = model_cfg
-    model_cfg["primary"] = model
+    model_cfg = patch_model_block(
+        defaults.get("model"),
+        default_model=model,
+        rewrite_mode=rewrite_mode,
+        force_primary=force_default_model or not defaults.get("model"),
+    )
+    defaults["model"] = model_cfg if isinstance(model_cfg, dict) else {"primary": model_cfg}
 
-    if workspace:
+    if workspace and not defaults.get("workspace"):
         defaults["workspace"] = workspace
+
+    patch_model_catalog(defaults, model)
 
     cli_backends = ensure_dict(defaults, "cliBackends")
     claude_cli = ensure_dict(cli_backends, "claude-cli")
@@ -83,23 +154,41 @@ def patch_config(data: dict, *, relay_path: str, bridge_path: str, model: str, w
     claude_cli["sessionMode"] = "always"
 
     subagents = ensure_dict(defaults, "subagents")
-    subagents["allowAgents"] = merge_allow_all(subagents.get("allowAgents"))
+    if not subagents.get("allowAgents"):
+        subagents["allowAgents"] = ["*"]
 
     tools = ensure_dict(cfg, "tools")
     agent_to_agent = ensure_dict(tools, "agentToAgent")
     agent_to_agent["enabled"] = True
-    agent_to_agent["allow"] = merge_allow_all(agent_to_agent.get("allow"))
+    if not agent_to_agent.get("allow"):
+        agent_to_agent["allow"] = ["*"]
 
     agents_list = ensure_list(agents, "list")
-    ensure_agent(agents_list, "main", workspace=workspace, default=True, name="Main")
-    ensure_agent(agents_list, "news", workspace=workspace, name="News")
+    if not agents_list:
+        ensure_agent(agents_list, "main", workspace=workspace, default=True, name="Main")
+    patch_agent_models(
+        agents_list,
+        default_model=model,
+        rewrite_mode=rewrite_mode,
+        force_agent_models=force_agent_models,
+    )
+
+    if ensure_news_agent:
+        ensure_agent(agents_list, "news", workspace=workspace, name="News")
 
     overlay = ensure_dict(cfg, "overlay")
     overlay["openclawClaudeOverlay"] = {
         "installed": True,
         "relay": relay_path,
         "bridge": bridge_path,
-        "model": model,
+        "defaultModel": model,
+        "rewriteMode": rewrite_mode,
+        "forceDefaultModel": force_default_model,
+        "forceAgentModels": force_agent_models,
+        "ensureNewsAgent": ensure_news_agent,
+        "runtimeUser": runtime_user,
+        "runtimeHome": runtime_home,
+        "stateDir": state_dir,
         "updatedAt": datetime.now(timezone.utc).isoformat(),
     }
     return cfg
@@ -112,14 +201,21 @@ def main():
     parser.add_argument("--bridge-path", required=True)
     parser.add_argument("--model", default="claude-cli/claude-opus-4-6")
     parser.add_argument("--workspace", required=True)
+    parser.add_argument("--rewrite-mode", choices=["claude-only", "all"], default="claude-only")
+    parser.add_argument("--force-default-model", type=int, default=0)
+    parser.add_argument("--force-agent-models", type=int, default=0)
+    parser.add_argument("--ensure-news-agent", type=int, default=0)
+    parser.add_argument("--runtime-user", default="openclaw")
+    parser.add_argument("--runtime-home", default="/home/openclaw")
+    parser.add_argument("--state-dir", default="/root/.openclaw")
     parser.add_argument("--write", action="store_true")
     args = parser.parse_args()
 
     path = Path(args.config)
     if path.exists():
-      data = json.loads(path.read_text())
+        data = json.loads(path.read_text())
     else:
-      data = {}
+        data = {}
 
     patched = patch_config(
         data,
@@ -127,6 +223,13 @@ def main():
         bridge_path=args.bridge_path,
         model=args.model,
         workspace=args.workspace,
+        rewrite_mode=args.rewrite_mode,
+        force_default_model=bool(args.force_default_model),
+        force_agent_models=bool(args.force_agent_models),
+        ensure_news_agent=bool(args.ensure_news_agent),
+        runtime_user=args.runtime_user,
+        runtime_home=args.runtime_home,
+        state_dir=args.state_dir,
     )
 
     text = json.dumps(patched, ensure_ascii=False, indent=2) + "\n"

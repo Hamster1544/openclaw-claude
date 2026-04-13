@@ -1,42 +1,98 @@
 # OpenClaw Claude Overlay
 
-Этот репозиторий накатывается поверх уже установленного `openclaw` на Linux и добавляет рабочий `claude-cli` runtime с:
-- relay для OpenClaw;
-- MCP bridge для Telegram/file sending;
-- multi-agent spawn в фоне;
-- переносом памяти, workspace и агентских данных между машинами.
+Этот репозиторий накатывается поверх уже установленного `openclaw` на Linux и добавляет `claude-cli` runtime как бережный overlay, а не как жёсткую замену существующей конфигурации.
 
-Ограничения текущей сборки:
-- только Linux;
-- запускать как `root`;
-- на машине уже должны быть установлены `openclaw` и `claude`;
-- `root` уже должен быть залогинен в `claude cli`.
+Что делает overlay:
+- ставит relay для OpenClaw;
+- ставит MCP bridge для Telegram/file sending и background subagents;
+- сохраняет существующие `channels`, `gateway`, bot token и прочие чужие поля;
+- мягко переводит только Claude-модели на `claude-cli` по умолчанию;
+- не трогает другие провайдеры, если это не запрошено явно.
+
+## Базовые требования
+
+- Linux
+- запуск от `root`
+- уже установлен `openclaw`
+- уже установлен `claude`
+- кто-то уже залогинен в `claude cli`
+
+По умолчанию installer ищет OpenClaw state так:
+1. `OVERLAY_CONFIG_PATH`, если задан
+2. `/root/.openclaw/openclaw.json`, если он существует
+3. `~/.openclaw/openclaw.json`
 
 ## Что installer делает
 
 Installer не переустанавливает `openclaw`, а:
-- ставит relay в `/usr/local/bin/claude-openclaw-relay`;
-- ставит bridge в `/opt/openclaw-bridge/openclaw_bridge_server.py`;
+- ставит relay в `/usr/local/bin/claude-openclaw-relay` по умолчанию;
+- ставит bridge в `/opt/openclaw-bridge/openclaw_bridge_server.py` по умолчанию;
 - создаёт Unix-пользователя `openclaw`, если его ещё нет;
-- копирует Claude credentials из `/root/.claude*` в `/home/openclaw`;
+- копирует Claude credentials из `OVERLAY_CLAUDE_SOURCE_HOME` или из detected target home;
 - ставит Python venv для bridge;
-- даёт `openclaw` passwordless sudo;
-- мягко патчит `/root/.openclaw/openclaw.json`, не затирая `channels`, `gateway`, bot token и прочие чужие поля.
+- даёт runtime user passwordless sudo;
+- патчит `openclaw.json` идемпотентно.
 
-## Быстрый перенос
+## Поведение patcher
+
+По умолчанию patcher работает в режиме `claude-only`:
+- `anthropic/claude-*` -> `claude-cli/claude-*`
+- уже существующие `claude-cli/*` остаются как есть
+- не-Claude модели не трогаются
+
+Это значит, что существующие `openai-codex/*` и другие провайдеры сохраняются.
+
+Если нужен более жёсткий режим:
+- `OVERLAY_MODEL_REWRITE_MODE=all`
+- `OVERLAY_FORCE_DEFAULT_MODEL=1`
+- `OVERLAY_FORCE_AGENT_MODELS=1`
+
+## Полезные env vars
+
+- `OVERLAY_CONFIG_PATH` — явный путь к `openclaw.json`
+- `OVERLAY_STATE_DIR` — явный путь к `.openclaw`
+- `OVERLAY_TARGET_HOME` — home владельца OpenClaw state
+- `OVERLAY_TARGET_USER` — владелец OpenClaw state
+- `OVERLAY_OPENCLAW_USER` — Unix user, под которым будет крутиться Claude runtime
+- `OVERLAY_OPENCLAW_HOME` — home этого runtime user
+- `OVERLAY_CLAUDE_SOURCE_HOME` — откуда копировать `.claude*`
+- `OVERLAY_WORKSPACE` — явный workspace path
+- `OVERLAY_MODEL` — default Claude model, по умолчанию `claude-cli/claude-opus-4-6`
+- `OVERLAY_MODEL_REWRITE_MODE` — `claude-only` или `all`
+- `OVERLAY_FORCE_DEFAULT_MODEL=1` — принудительно заменить default model
+- `OVERLAY_FORCE_AGENT_MODELS=1` — принудительно заменить явные agent models
+- `OVERLAY_ENSURE_NEWS_AGENT=1` — добавить `news` агент
+- `OVERLAY_TAKE_WORKSPACE_OWNERSHIP=1` — если нет `setfacl`, рекурсивно сменить владельца workspace на runtime user
+
+## Быстрая установка
+
+```bash
+git clone https://github.com/Hamster1544/openclaw-claude.git
+cd openclaw-claude
+sudo ./install.sh
+sudo ./doctor.sh
+```
+
+Одной командой:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Hamster1544/openclaw-claude/main/bootstrap.sh | sudo bash
+```
+
+## Перенос
 
 На старой машине:
 
 ```bash
-cd openclaw-claude-overlay
+cd openclaw-claude
 sudo ./export.sh /root/openclaw-transfer.tar.gz
 ```
 
 На новой машине:
 
 ```bash
-git clone <repo>
-cd openclaw-claude-overlay
+git clone https://github.com/Hamster1544/openclaw-claude.git
+cd openclaw-claude
 sudo ./import.sh /path/to/openclaw-transfer.tar.gz
 sudo ./doctor.sh
 ```
@@ -47,39 +103,17 @@ sudo ./doctor.sh
 curl -fsSL https://raw.githubusercontent.com/Hamster1544/openclaw-claude/main/bootstrap.sh | sudo bash -s -- --import /path/to/openclaw-transfer.tar.gz
 ```
 
-`import.sh` сам:
-- восстановит `workspace` и `agents`;
-- аккуратно смержит `openclaw.json`;
-- затем автоматически запустит `install.sh`, чтобы runtime и конфиг точно совпали с overlay.
-
-## Если нужен только runtime без переноса данных
-
-```bash
-git clone <repo>
-cd openclaw-claude-overlay
-sudo ./install.sh
-sudo ./doctor.sh
-```
-
-Или одной командой:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Hamster1544/openclaw-claude/main/bootstrap.sh | sudo bash
-```
-
 ## Что входит в export
 
 Export включает:
-- `/root/.openclaw/openclaw.json`
-- `/root/.openclaw/agents/`
-- весь текущий workspace агента
-- файловую память: `MEMORY.md`, `memory/`, `skills/`, `AGENTS.md`, `SOUL.md`, `USER.md`, `TOOLS.md`, `HEARTBEAT.md`
+- detected `openclaw.json`
+- `agents/`
+- текущий workspace
 
 Export не включает:
-- логи
+- runtime из `/opt/openclaw-bridge` и `/usr/local/bin`
 - временные файлы
 - Claude credentials
-- runtime из `/opt/openclaw-bridge` и `/usr/local/bin`, потому что это восстанавливает `install.sh`
 
 ## Файлы
 
@@ -90,6 +124,7 @@ Export не включает:
 - `doctor.sh`
 
 Ключевая логика:
+- `lib/common.sh`
 - `lib/patch_openclaw_config.py`
 - `lib/merge_import_config.py`
 - `runtime/claude-openclaw-relay`

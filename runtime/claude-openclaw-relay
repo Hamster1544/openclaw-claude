@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import json,os,pwd,subprocess,sys,tempfile
 from pathlib import Path
-CLAUDE_BIN="/usr/bin/claude"; SET_PRIV="/usr/bin/setpriv"; OPENCLAW_CONFIG=Path("/root/.openclaw/openclaw.json"); STATE=Path("/root/.openclaw"); BRIDGE_PY="/opt/openclaw-bridge/openclaw_bridge_server.py"; BRIDGE_PYTHON="/opt/openclaw-bridge/venv/bin/python"; OPENCLAW_USER="openclaw"; OPENCLAW_HOME="/home/openclaw"; FORCE_CWD=os.environ.get("OPENCLAW_CLAUDE_CLI_CWD","")
+CLAUDE_BIN="__OVERLAY_CLAUDE_BIN__"; SET_PRIV="__OVERLAY_SETPRIV_BIN__"; OPENCLAW_CONFIG=Path("__OVERLAY_CONFIG_PATH__"); STATE=Path("__OVERLAY_STATE_DIR__"); BRIDGE_PY="__OVERLAY_BRIDGE_PATH__"; BRIDGE_PYTHON="__OVERLAY_BRIDGE_PYTHON__"; OPENCLAW_USER="__OVERLAY_RUNTIME_USER__"; OPENCLAW_HOME="__OVERLAY_RUNTIME_HOME__"; FORCE_CWD=os.environ.get("OPENCLAW_CLAUDE_CLI_CWD","")
 TAKES_VALUE={"--output-format","--model","--session-id","--resume","--image","--permission-mode","--plugin-dir","--cwd","--mcp-config","--tools","--allowedTools","--allowed-tools","--disallowedTools","--disallowed-tools","--effort","--system-prompt","--append-system-prompt","--settings","--agent","--agents","--max-budget-usd"}
 def load_json(p):
     try: return json.loads(Path(p).read_text())
