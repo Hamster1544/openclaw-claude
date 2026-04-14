@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import copy
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -88,9 +87,6 @@ def ensure_agent(agents_list: list, agent_id: str, *, workspace: str | None = No
     if workspace and not entry.get("workspace"):
         entry["workspace"] = workspace
 
-    subagents = ensure_dict(entry, "subagents")
-    if not subagents.get("allowAgents"):
-        subagents["allowAgents"] = ["*"]
     return entry
 
 
@@ -105,6 +101,9 @@ def patch_agent_models(agents_list: list, *, default_model: str, rewrite_mode: s
                 rewrite_mode=rewrite_mode,
                 force_primary=force_agent_models,
             )
+        subagents = ensure_dict(entry, "subagents")
+        if not subagents.get("allowAgents"):
+            subagents["allowAgents"] = ["*"]
 
 
 def patch_model_catalog(defaults: dict, default_model: str):
@@ -151,10 +150,6 @@ def patch_config(
     claude_cli["serialize"] = False
     claude_cli["sessionMode"] = "always"
 
-    subagents = ensure_dict(defaults, "subagents")
-    if not subagents.get("allowAgents"):
-        subagents["allowAgents"] = ["*"]
-
     tools = ensure_dict(cfg, "tools")
     agent_to_agent = ensure_dict(tools, "agentToAgent")
     agent_to_agent["enabled"] = True
@@ -174,21 +169,6 @@ def patch_config(
     if ensure_news_agent:
         ensure_agent(agents_list, "news", workspace=workspace, name="News")
 
-    overlay = ensure_dict(cfg, "overlay")
-    overlay["openclawClaudeOverlay"] = {
-        "installed": True,
-        "relay": relay_path,
-        "bridge": bridge_path,
-        "defaultModel": model,
-        "rewriteMode": rewrite_mode,
-        "forceDefaultModel": force_default_model,
-        "forceAgentModels": force_agent_models,
-        "ensureNewsAgent": ensure_news_agent,
-        "runtimeUser": runtime_user,
-        "runtimeHome": runtime_home,
-        "stateDir": state_dir,
-        "updatedAt": datetime.now(timezone.utc).isoformat(),
-    }
     return cfg
 
 

@@ -24,10 +24,9 @@
     "agents.defaults.cliBackends.claude-cli.command",
     "agents.defaults.cliBackends.claude-cli.serialize",
     "agents.defaults.cliBackends.claude-cli.sessionMode",
-    "agents.defaults.subagents.allowAgents",
     "tools.agentToAgent.enabled",
     "tools.agentToAgent.allow",
-    "overlay.openclawClaudeOverlay"
+    "agents.list[].subagents.allowAgents"
   ],
   "preserve_paths": [
     "channels",

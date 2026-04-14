@@ -43,9 +43,6 @@ print("model.primary =", primary)
 print("claude-cli.command =", cli.get("command"))
 print("claude-cli.serialize =", cli.get("serialize"))
 print("claude-cli.sessionMode =", cli.get("sessionMode"))
-overlay = (cfg.get("overlay") or {}).get("openclawClaudeOverlay") or {}
-print("overlay.rewriteMode =", overlay.get("rewriteMode"))
-print("overlay.runtimeUser =", overlay.get("runtimeUser"))
 PY
 
 sudo -n -u "$OPENCLAW_USER" claude --version >/dev/null 2>&1 || true
