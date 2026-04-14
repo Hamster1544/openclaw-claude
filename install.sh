@@ -208,6 +208,10 @@ python3 "$REPO_ROOT/lib/patch_openclaw_config.py" \
   --state-dir "$STATE_DIR" \
   --write
 
+python3 "$REPO_ROOT/lib/migrate_openclaw_sessions.py" \
+  --config "$CONFIG_PATH" \
+  --state-dir "$STATE_DIR" >/dev/null
+
 restart_gateway
 
 log "overlay installed"
