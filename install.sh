@@ -60,12 +60,27 @@ sync_claude_credentials() {
 }
 
 ensure_python_venv_support() {
-  if python3 -m venv --help >/dev/null 2>&1; then
+  if python3 - <<'PY' >/dev/null 2>&1
+import tempfile, subprocess, shutil, pathlib
+td = tempfile.mkdtemp(prefix='overlay-venv-check-')
+path = pathlib.Path(td) / 'venv'
+try:
+    raise SystemExit(subprocess.run(['python3', '-m', 'venv', str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode)
+finally:
+    shutil.rmtree(td, ignore_errors=True)
+PY
+  then
     return 0
   fi
+  local py_minor
+  py_minor="$(python3 - <<'PY'
+import sys
+print(f"{sys.version_info.major}.{sys.version_info.minor}")
+PY
+)"
   if command -v apt-get >/dev/null 2>&1; then
     apt-get update -y >/dev/null
-    apt-get install -y python3-venv >/dev/null
+    apt-get install -y "python${py_minor}-venv" >/dev/null 2>&1 || apt-get install -y python3-venv >/dev/null
     return 0
   fi
   if command -v dnf >/dev/null 2>&1; then
