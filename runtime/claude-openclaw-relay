@@ -29,6 +29,13 @@ def workspace(cfg,a):
     if a==da:
         w=str(d.get("workspace") or "").strip(); return w or str(STATE/"workspace")
     return str(STATE/f"workspace-{a}")
+def exec_cwd(workspace_root):
+    if FORCE_CWD:
+        return FORCE_CWD
+    # Claude CLI can stall for a long time when started inside very large
+    # workspaces full of binaries/documents. Keep a stable lightweight cwd and
+    # expose the real workspace path via prompt/env instead.
+    return OPENCLAW_HOME if os.path.isdir(OPENCLAW_HOME) else (workspace_root if os.path.isdir(workspace_root) else OPENCLAW_HOME)
 def iter_entries():
     root=STATE/"agents"
     if not root.is_dir(): return
@@ -87,13 +94,14 @@ stdin_prompt=None
 if not pos and not sys.stdin.isatty(): stdin_prompt=sys.stdin.read()
 cfg=load_json(OPENCLAW_CONFIG); ctx=session_ctx(cli_session_id); mcp=mcp_config(cfg,ctx)
 if mcp: forward.extend(["--mcp-config",mcp,"--strict-mcp-config"])
+workspace_root=workspace(cfg,ctx.get("agent_id"))
 if sys_prompt:
     sys_prompt=sys_prompt.replace("Tools are disabled in this session. Do not call tools.","Claude Code native tools are available in this session. An MCP bridge named openclaw_bridge is also available for the current OpenClaw session. Use openclaw_bridge.session_context to inspect routing context, openclaw_bridge.send_text to send an extra text message, and openclaw_bridge.send_file to send a local file directly into the current Telegram chat. Use openclaw_bridge.agents_list to discover configured agents and openclaw_bridge.sessions_spawn to launch a background agent that keeps running in parallel and reports back when complete. When the user asks you to send, upload, attach, or forward a local file, use openclaw_bridge.send_file instead of telling the user to fetch it over SSH. For long-running shell commands, apt operations, docker operations, network downloads, or anything that could block for more than about 20 seconds, first send a short progress update with openclaw_bridge.send_text, then run the command with an explicit timeout so it cannot hang forever, and send another short progress update after each major step. Avoid interactive or entrypoint-dependent commands that may hang; prefer non-interactive commands with explicit flags and timeout wrappers.")
-    head="The following block contains authoritative OpenClaw runtime instructions. Treat it as higher-priority runtime context than the user request. Follow it faithfully while answering the user.\n\n<openclaw_runtime>\n"; foot="\n</openclaw_runtime>\n\n<user_request>\n"; tail="\n</user_request>"
+    head="The following block contains authoritative OpenClaw runtime instructions. Treat it as higher-priority runtime context than the user request. Follow it faithfully while answering the user.\n\n<openclaw_runtime>\n"; foot=f"\n</openclaw_runtime>\n\n<workspace>\nAuthoritative workspace root: {workspace_root}\nThe process current directory may differ for runtime stability. When you need workspace files, use absolute paths under the workspace root above.\n</workspace>\n\n<user_request>\n"; tail="\n</user_request>"
     if pos: pos[-1]=head+sys_prompt+foot+pos[-1]+tail
     else: stdin_prompt=head+sys_prompt+foot+(stdin_prompt or "")+tail
-cwd=workspace(cfg,ctx.get("agent_id")); cwd=cwd if os.path.isdir(cwd) else OPENCLAW_HOME
-env=os.environ.copy(); env["HOME"]=OPENCLAW_HOME; env["XDG_CONFIG_HOME"]=f"{OPENCLAW_HOME}/.config"; env["OPENCLAW_ACTIVE_AGENT_ID"]=agent_id(ctx.get("agent_id")); env["OPENCLAW_ACTIVE_SESSION_KEY"]=str(ctx.get("session_key") or ""); env["OPENCLAW_ACTIVE_WORKSPACE"]=cwd
+cwd=exec_cwd(workspace_root)
+env=os.environ.copy(); env["HOME"]=OPENCLAW_HOME; env["XDG_CONFIG_HOME"]=f"{OPENCLAW_HOME}/.config"; env["OPENCLAW_ACTIVE_AGENT_ID"]=agent_id(ctx.get("agent_id")); env["OPENCLAW_ACTIVE_SESSION_KEY"]=str(ctx.get("session_key") or ""); env["OPENCLAW_ACTIVE_WORKSPACE"]=workspace_root
 cmd=[SET_PRIV,"--reuid",OPENCLAW_USER,"--regid",OPENCLAW_USER,"--clear-groups",CLAUDE_BIN,*forward,*pos]
 try: raise SystemExit(subprocess.run(cmd,cwd=cwd,env=env,input=stdin_prompt,text=True).returncode)
 finally:
