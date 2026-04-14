@@ -59,6 +59,24 @@ sync_claude_credentials() {
   fi
 }
 
+ensure_python_venv_support() {
+  if python3 -m venv --help >/dev/null 2>&1; then
+    return 0
+  fi
+  if command -v apt-get >/dev/null 2>&1; then
+    apt-get update -y >/dev/null
+    apt-get install -y python3-venv >/dev/null
+    return 0
+  fi
+  if command -v dnf >/dev/null 2>&1; then
+    dnf install -y python3-virtualenv >/dev/null 2>&1 || dnf install -y python3-venv >/dev/null 2>&1 || true
+  elif command -v yum >/dev/null 2>&1; then
+    yum install -y python3-virtualenv >/dev/null 2>&1 || yum install -y python3-venv >/dev/null 2>&1 || true
+  elif command -v zypper >/dev/null 2>&1; then
+    zypper --non-interactive install python3-virtualenv >/dev/null 2>&1 || true
+  fi
+}
+
 install_sudoers() {
   local sudoers_path=/etc/sudoers.d/openclaw-overlay
   printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$OPENCLAW_USER" >"$sudoers_path"
@@ -147,6 +165,7 @@ cp "$REPO_ROOT/runtime/claude-openclaw-relay" "$RELAY_PATH"
 cp "$REPO_ROOT/runtime/openclaw_bridge_server.py" "$BRIDGE_PATH"
 
 if [[ -f "$REPO_ROOT/runtime/requirements.txt" ]]; then
+  ensure_python_venv_support
   python3 -m venv "$OVERLAY_HOME/venv"
   "$OVERLAY_HOME/venv/bin/pip" install --upgrade pip >/dev/null
   "$OVERLAY_HOME/venv/bin/pip" install -r "$REPO_ROOT/runtime/requirements.txt" >/dev/null
