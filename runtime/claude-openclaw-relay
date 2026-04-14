@@ -2,7 +2,7 @@
 import json,os,pwd,subprocess,sys,tempfile
 from pathlib import Path
 CLAUDE_BIN="__OVERLAY_CLAUDE_BIN__"; SET_PRIV="__OVERLAY_SETPRIV_BIN__"; OPENCLAW_CONFIG=Path("__OVERLAY_CONFIG_PATH__"); STATE=Path("__OVERLAY_STATE_DIR__"); BRIDGE_PY="__OVERLAY_BRIDGE_PATH__"; BRIDGE_PYTHON="__OVERLAY_BRIDGE_PYTHON__"; OPENCLAW_USER="__OVERLAY_RUNTIME_USER__"; OPENCLAW_HOME="__OVERLAY_RUNTIME_HOME__"; FORCE_CWD=os.environ.get("OPENCLAW_CLAUDE_CLI_CWD","")
-TAKES_VALUE={"--output-format","--model","--session-id","--resume","--image","--permission-mode","--plugin-dir","--cwd","--mcp-config","--tools","--allowedTools","--allowed-tools","--disallowedTools","--disallowed-tools","--effort","--system-prompt","--append-system-prompt","--settings","--agent","--agents","--max-budget-usd"}
+TAKES_VALUE={"-p","--output-format","--model","--session-id","--resume","--image","--permission-mode","--plugin-dir","--cwd","--mcp-config","--tools","--allowedTools","--allowed-tools","--disallowedTools","--disallowed-tools","--effort","--system-prompt","--append-system-prompt","--settings","--agent","--agents","--max-budget-usd"}
 def load_json(p):
     try: return json.loads(Path(p).read_text())
     except Exception: return {}
