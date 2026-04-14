@@ -159,6 +159,17 @@ from pathlib import Path
 cfg_path = Path(sys.argv[1])
 target_home = Path(sys.argv[2])
 default = str(target_home / "openclaw-workspace")
+
+def normalize(value: str) -> str:
+    value = (value or "").strip()
+    if not value:
+        return ""
+    if len(value) >= 3 and value[1:3] == ":\\":
+        value = value[2:].replace("\\", "/")
+        if not value.startswith("/"):
+            value = "/" + value
+    return value
+
 if not cfg_path.exists():
     print(default)
     raise SystemExit(0)
@@ -171,14 +182,14 @@ except Exception:
 
 agents = data.get("agents") or {}
 defaults = agents.get("defaults") or {}
-workspace = str(defaults.get("workspace") or "").strip()
+workspace = normalize(str(defaults.get("workspace") or ""))
 if workspace:
     print(workspace)
     raise SystemExit(0)
 
 for entry in agents.get("list") or []:
     if isinstance(entry, dict) and entry.get("default") is True:
-        value = str(entry.get("workspace") or "").strip()
+        value = normalize(str(entry.get("workspace") or ""))
         if value:
             print(value)
             raise SystemExit(0)
@@ -225,6 +236,17 @@ from pathlib import Path
 cfg_path = Path(sys.argv[1])
 target_home = Path(sys.argv[2])
 default_fallback = str(target_home / "openclaw-workspace")
+
+def normalize(value: str) -> str:
+    value = (value or "").strip()
+    if not value:
+        return ""
+    if len(value) >= 3 and value[1:3] == ":\\":
+        value = value[2:].replace("\\", "/")
+        if not value.startswith("/"):
+            value = "/" + value
+    return value
+
 if not cfg_path.exists():
     print(default_fallback)
     raise SystemExit(0)
@@ -237,7 +259,7 @@ except Exception:
 
 agents = data.get("agents") or {}
 defaults = agents.get("defaults") or {}
-default_workspace = str(defaults.get("workspace") or "").strip() or default_fallback
+default_workspace = normalize(str(defaults.get("workspace") or "")) or default_fallback
 
 seen = set()
 if default_workspace and default_workspace not in seen:
@@ -247,7 +269,7 @@ if default_workspace and default_workspace not in seen:
 for entry in agents.get("list") or []:
     if not isinstance(entry, dict):
         continue
-    value = str(entry.get("workspace") or default_workspace).strip()
+    value = normalize(str(entry.get("workspace") or default_workspace))
     if value and value not in seen:
         print(value)
         seen.add(value)
