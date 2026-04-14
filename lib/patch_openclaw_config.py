@@ -38,6 +38,15 @@ def merge_allow_all(value):
     return ["*"]
 
 
+def normalize_workspace_path(value: str | None) -> str:
+    path = str(value or "").strip()
+    if len(path) >= 3 and path[1:3] == ":\\":
+        path = path[2:].replace("\\", "/")
+        if not path.startswith("/"):
+            path = "/" + path
+    return path
+
+
 def normalize_model_ref(value: str | None, default_model: str, *, rewrite_mode: str, force_any: bool = False) -> str | None:
     ref = str(value or "").strip()
     if not ref:
@@ -84,7 +93,10 @@ def ensure_agent(agents_list: list, agent_id: str, *, workspace: str | None = No
         entry["name"] = name
     if default and "default" not in entry:
         entry["default"] = True
-    if workspace and not entry.get("workspace"):
+    current_workspace = normalize_workspace_path(entry.get("workspace"))
+    if current_workspace:
+        entry["workspace"] = current_workspace
+    elif workspace:
         entry["workspace"] = workspace
 
     return entry
@@ -94,6 +106,9 @@ def patch_agent_models(agents_list: list, *, default_model: str, rewrite_mode: s
     for entry in agents_list:
         if not isinstance(entry, dict):
             continue
+        workspace = normalize_workspace_path(entry.get("workspace"))
+        if workspace:
+            entry["workspace"] = workspace
         if "model" in entry:
             entry["model"] = patch_model_block(
                 entry.get("model"),
@@ -139,7 +154,10 @@ def patch_config(
     )
     defaults["model"] = model_cfg if isinstance(model_cfg, dict) else {"primary": model_cfg}
 
-    if workspace and not defaults.get("workspace"):
+    current_default_workspace = normalize_workspace_path(defaults.get("workspace"))
+    if current_default_workspace:
+        defaults["workspace"] = current_default_workspace
+    elif workspace:
         defaults["workspace"] = workspace
 
     patch_model_catalog(defaults, model)
